@@ -782,13 +782,13 @@ function submit(qid,qtype){
     if(co)el.classList.add('correct');if(us&&!co)el.classList.add('wrong');if(us&&co)el.classList.add('correct');
   });
   document.getElementById('res').innerHTML='<div class="result-box '+(is?'good':'bad')+'"><div class="ans">'+(is?'✅ 正确':'❌ 错误')+'</div><div>正确答案：<b>'+ca+'</b></div>'+(q.analysis?'<div class="analysis">📖 '+q.analysis+'</div>':'')+'</div>';
-  renderToolbar();
+  renderToolbar();renderQ();
   saveProgress();
-  setTimeout(function(){if(currentIndex<questionList.length-1)nextQ()},2500);
+  setTimeout(function(){nextQ()},2500);
 }
 
 function prevQ(){if(currentIndex>0){currentIndex--;renderToolbar();renderQ();saveProgress()}}
-function nextQ(){if(currentIndex<questionList.length-1){currentIndex++;renderToolbar();renderQ();saveProgress()}else if(currentIndex>=questionList.length-1&&submitted){currentIndex++;renderToolbar();renderQ();saveProgress()}}
+function nextQ(){if(currentIndex<questionList.length-1){currentIndex++;renderToolbar();renderQ();saveProgress()}else if(currentIndex>=questionList.length-1){var cq=questionList[currentIndex];if(cq&&submittedQuestions[cq.id]){currentIndex++;renderToolbar();renderQ();saveProgress()}}}
 
 function toggleStar(qid){
   var i=markedQuestions.indexOf(qid);
@@ -824,10 +824,20 @@ function jumpTo(i){closeSheet();currentIndex=i;submitted=false;renderToolbar();r
 function submitAll(){
   closeSheet();
   var unanswered=questionList.filter(function(q){return !results[q.id]});
-  if(unanswered.length===0){alert('所有题目已提交');return}
+  if(unanswered.length===0){
+    var allDone=questionList.length>0&&questionList.every(function(q){return submittedQuestions[q.id]});
+    if(allDone){currentIndex=questionList.length;renderToolbar();renderQ();saveProgress()}
+    else{alert('所有题目已提交')}
+    return;
+  }
   if(!confirm('还有'+unanswered.length+'题未提交，确定用当前所选答案提交全部吗？'))return;
   unanswered.forEach(function(q){
-    if(!answers[q.id]){
+    var ua=answers[q.id];
+    if(!ua||(Array.isArray(ua)&&ua.length===0)){
+      if(!q.options||q.options.length===0){
+        if(q.type===3){q.options=[{name:'对',data:'正确'},{name:'错',data:'错误'}]}
+        else{return}
+      }
       if(q.type===2)answers[q.id]=[q.options[0].name];
       else answers[q.id]=q.options[0].name;
     }
@@ -842,7 +852,9 @@ function submitAll(){
   });
   currentIndex=prevIdx<questionList.length?prevIdx:questionList.length-1;
   renderToolbar();renderQ();saveProgress();
-  setTimeout(showAnswerSheet,400);
+  var allSubmittedNow=questionList.every(function(q){return submittedQuestions[q.id]});
+  if(allSubmittedNow){setTimeout(function(){currentIndex=questionList.length;renderToolbar();renderQ();saveProgress()},400)}
+  else{setTimeout(showAnswerSheet,400)}
 }
 
 function submitOne(qid,qtype){
