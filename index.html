@@ -408,7 +408,7 @@ function buildHomeHTML(){
   h+='<div class="stats-grid">';
   h+='<div class="stat-item"><div class="val">'+stats.totalQuestions+'</div><div class="lbl">总题数</div></div>';
   h+='<div class="stat-item" style="cursor:pointer" onclick="startWrongPractice()"><div class="val">'+stats.wrongCount+'</div><div class="lbl">错题 ▶</div></div>';
-  h+='<div class="stat-item"><div class="val">'+stats.markedCount+'</div><div class="lbl">收藏</div></div>';
+  h+='<div class="stat-item" style="cursor:pointer" onclick="startMarkedPractice()"><div class="val">'+stats.markedCount+'</div><div class="lbl">收藏 ▶</div></div>';
   h+='<div class="stat-item"><div class="val">'+Object.keys(BANK_DATA).length+'</div><div class="lbl">分类</div></div>';
   h+='</div></div>';
   
@@ -597,7 +597,30 @@ function restoreOptions(){
 // === 构建题目列表 ===
 function buildList(){
   questionList=[];
-  if(currentCategory==='all')return;
+  if(currentCategory==='all'){
+    if(currentMode==='wrong'){
+      var wl=JSON.parse(localStorage.getItem('quiz_wrong')||'[]');
+      Object.keys(BANK_DATA).forEach(function(cat){
+        BANK_DATA[cat].forEach(function(q){
+          if(wl.indexOf(q.id)>-1){
+            if(q.type===3&&(!q.options||q.options.length===0)){q.options=[{name:'对',data:'正确'},{name:'错',data:'错误'}]}
+            questionList.push(q);
+          }
+        });
+      });
+    } else if(currentMode==='marked'){
+      Object.keys(BANK_DATA).forEach(function(cat){
+        BANK_DATA[cat].forEach(function(q){
+          if(markedQuestions.indexOf(q.id)>-1){
+            if(q.type===3&&(!q.options||q.options.length===0)){q.options=[{name:'对',data:'正确'},{name:'错',data:'错误'}]}
+            questionList.push(q);
+          }
+        });
+      });
+    }
+    answers={};results={};totalCorrect=0;totalAnswered=0;submitted=false;currentIndex=0;
+    return;
+  }
   
   if(currentCategory==='mixed'){
     // 跨分类混合练习：从选择的分类中随机抽取210题
@@ -645,15 +668,17 @@ function buildList(){
 // === 工具栏 ===
 function renderToolbar(){
   var h='';
-  if(currentCategory!=='all' || currentMode==='wrong'){
+  if(currentCategory!=='all' || currentMode==='wrong' || currentMode==='marked'){
     h+='<div class="toolbar" style="margin-bottom:6px">';
-    var displayName=currentCategory==='mixed'?'跨分类练习':(currentCategory==='all'?'全题库错题':currentCategory.replace('（基础理论）','').replace('（三级实务）','').replace('（三级综合）','').replace('（模拟卷）',''));
+    var displayName=currentCategory==='mixed'?'跨分类练习':(currentCategory==='all'?(currentMode==='marked'?'全部收藏':'全题库错题'):currentCategory.replace('（基础理论）','').replace('（三级实务）','').replace('（三级综合）','').replace('（模拟卷）',''));
     h+='<span style="font-size:14px;font-weight:700;margin-right:8px;color:var(--text)">'+displayName+'</span>';
     if(currentCategory!=='mixed' && currentCategory!=='all'){
       h+='<button class="mode-btn active" data-mode="all" onclick="switchMode(\'all\')">顺序练习</button>';
       h+='<button class="mode-btn" data-mode="random" onclick="switchMode(\'random\')">随机20题</button>';
       h+='<button class="mode-btn" data-mode="wrong" onclick="switchMode(\'wrong\')">错题</button>';
       h+='<button class="mode-btn" data-mode="marked" onclick="switchMode(\'marked\')">收藏</button>';
+    } else if(currentMode==='marked'){
+      h+='<button class="mode-btn active" data-mode="marked" style="border-color:#f59e0b;color:#d97706;font-weight:700">⭐ 全部收藏</button>';
     } else {
       h+='<button class="mode-btn active" data-mode="wrong" style="border-color:var(--accent);color:var(--accent);font-weight:700">🔁 全部错题</button>';
     }
@@ -914,6 +939,28 @@ function startWrongPractice(){
   renderQ();
 }
 
+// === 全题库收藏练习 ===
+function startMarkedPractice(){
+  if(!markedQuestions.length){alert('暂无收藏题目，做题时点击☆收藏即可加入！⭐');return}
+  var markedList=[];
+  Object.keys(BANK_DATA).forEach(function(cat){
+    BANK_DATA[cat].forEach(function(q){
+      if(markedQuestions.indexOf(q.id)>-1){
+        if(q.type===3&&(!q.options||q.options.length===0)){q.options=[{name:'对',data:'正确'},{name:'错',data:'错误'}]}
+        markedList.push(q);
+      }
+    });
+  });
+  if(!markedList.length){alert('暂无收藏题目，做题时点击☆收藏即可加入！⭐');return}
+  var ov=document.getElementById('statsOverlay');if(ov)ov.remove();
+  currentCategory='all';currentMode='marked';
+  questionList=markedList;
+  currentIndex=0;answers={};results={};totalCorrect=0;totalAnswered=0;submitted=false;
+  startTimer();
+  renderToolbar();
+  renderQ();
+}
+
 // === 统计面板 ===
 function showStats(){
   var stats=getStats();
@@ -923,7 +970,7 @@ function showStats(){
   h+='<div class="stats-grid">';
   h+='<div class="stat-item"><div class="val">'+stats.totalQuestions+'</div><div class="lbl">总题数</div></div>';
   h+='<div class="stat-item" style="cursor:pointer" onclick="startWrongPractice()"><div class="val">'+stats.wrongCount+'</div><div class="lbl">错题 ▶</div></div>';
-  h+='<div class="stat-item"><div class="val">'+stats.markedCount+'</div><div class="lbl">收藏</div></div>';
+  h+='<div class="stat-item" style="cursor:pointer" onclick="startMarkedPractice()"><div class="val">'+stats.markedCount+'</div><div class="lbl">收藏 ▶</div></div>';
   h+='<div class="stat-item"><div class="val">'+Object.keys(BANK_DATA).length+'</div><div class="lbl">分类</div></div>';
   h+='</div></div>';
   h+='<button class="act-btn btn-pri" style="width:100%" onclick="closeStats({target:{},currentTarget:{}})">关闭</button>';
@@ -941,7 +988,19 @@ function renderSummary(){
   stopTimer();
   var t=questionList.length,c=totalCorrect,w=t-c,r=t>0?Math.round(c/t*100):0;
   var timeStr=formatTime(timerElapsed);
-  document.getElementById('qarea').innerHTML='<div class="question-card"><div class="summary"><div class="big">'+(r>=80?'🎉':r>=50?'👍':'💪')+'</div><h2>答题完成</h2><div class="pct">正确率 '+r+'% · 用时 '+timeStr+'</div><div class="summary-grid"><div class="sum-card"><div class="val">'+t+'</div><div class="lbl">总题数</div></div><div class="sum-card"><div class="cv">'+c+'</div><div class="lbl">正确</div></div><div class="sum-card"><div class="wv">'+w+'</div><div class="lbl">错误</div></div><div class="sum-card"><div class="val">'+r+'%</div><div class="lbl">正确率</div></div></div><div class="actions"><button class="act-btn btn-pri" onclick="switchMode(\'all\')">重新练习</button><button class="act-btn btn-out" onclick="switchMode(\'wrong\')">复习错题</button><button class="act-btn btn-out" onclick="showHome()">返回首页</button></div></div></div>';
+  var btns='';
+  if(currentCategory==='all'&&currentMode==='marked'){
+    btns='<button class="act-btn btn-pri" onclick="switchMode(\'marked\')">重新练习收藏</button>';
+    btns+='<button class="act-btn btn-out" onclick="switchMode(\'wrong\')">复习错题</button>';
+  } else if(currentCategory==='all'&&currentMode==='wrong'){
+    btns='<button class="act-btn btn-pri" onclick="switchMode(\'wrong\')">重新练习错题</button>';
+    btns+='<button class="act-btn btn-out" onclick="startMarkedPractice()">练习收藏</button>';
+  } else {
+    btns='<button class="act-btn btn-pri" onclick="switchMode(\'all\')">重新练习</button>';
+    btns+='<button class="act-btn btn-out" onclick="switchMode(\'wrong\')">复习错题</button>';
+  }
+  btns+='<button class="act-btn btn-out" onclick="showHome()">返回首页</button>';
+  document.getElementById('qarea').innerHTML='<div class="question-card"><div class="summary"><div class="big">'+(r>=80?'🎉':r>=50?'👍':'💪')+'</div><h2>答题完成</h2><div class="pct">正确率 '+r+'% · 用时 '+timeStr+'</div><div class="summary-grid"><div class="sum-card"><div class="val">'+t+'</div><div class="lbl">总题数</div></div><div class="sum-card"><div class="cv">'+c+'</div><div class="lbl">正确</div></div><div class="sum-card"><div class="wv">'+w+'</div><div class="lbl">错误</div></div><div class="sum-card"><div class="val">'+r+'%</div><div class="lbl">正确率</div></div></div><div class="actions">'+btns+'</div></div></div>';
 }
 
 function resetAll(){
