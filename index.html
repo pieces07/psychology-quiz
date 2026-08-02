@@ -881,7 +881,12 @@ function startWrongPractice(){
   var wrongQuestions=[];
   Object.keys(BANK_DATA).forEach(function(cat){
     BANK_DATA[cat].forEach(function(q){
-      if(wl.indexOf(q.id)>-1) wrongQuestions.push(q);
+      if(wl.indexOf(q.id)>-1){
+        if(q.type===3&&(!q.options||q.options.length===0)){
+          q.options=[{name:'对',data:'正确'},{name:'错',data:'错误'}];
+        }
+        wrongQuestions.push(q);
+      }
     });
   });
   if(!wrongQuestions.length){alert('暂无错题，继续加油！🎉');return}
