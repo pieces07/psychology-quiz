@@ -793,7 +793,8 @@ function submit(qid,qtype){
   if(!ua||(Array.isArray(ua)&&ua.length===0)){alert('请先选择答案');return}
   var alreadySubmittedBefore=!!submittedQuestions[qid];
   submitted=true;
-  if(!alreadySubmittedBefore){totalAnswered++;recordTodayPractice()}
+  if(!alreadySubmittedBefore){totalAnswered++}
+  recordTodayPractice();
   var q=questionList[currentIndex],ca=q.answer||'',is=false;
   if(qtype===2){is=[].concat(ua).sort().join(',')===ca.split(',').map(function(s){return s.trim()}).sort().join(',')}
   else if(qtype===3){var uis=ua==='对'||ua==='正确',cis=ca==='对'||ca==='正确';is=uis===cis}
@@ -905,7 +906,8 @@ function submitOne(qid,qtype){
   var ua=answers[qid];
   if(!ua||(Array.isArray(ua)&&ua.length===0))return;
   var alreadySubmittedBefore=!!submittedQuestions[qid];
-  if(!alreadySubmittedBefore){totalAnswered++;recordTodayPractice()}
+  if(!alreadySubmittedBefore){totalAnswered++}
+  recordTodayPractice();
   var q=questionList[currentIndex],ca=q.answer||'',is=false;
   if(qtype===2){is=[].concat(ua).sort().join(',')===ca.split(',').map(function(s){return s.trim()}).sort().join(',')}
   else if(qtype===3){var uis=ua==='对'||ua==='正确',cis=ca==='对'||ca==='正确';is=uis===cis}
