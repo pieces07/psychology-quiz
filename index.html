@@ -375,7 +375,21 @@ function getDeviceId(){
 function getMyTodayCount(){
   var today=new Date().toLocaleDateString('zh-CN');
   var raw=localStorage.getItem('quiz_my_today_count');
-  if(!raw)return {date:today,count:0};
+  if(!raw){
+    // Fallback: migrate from old quiz_today_practice (data before sync feature)
+    var oldRaw=localStorage.getItem('quiz_today_practice');
+    if(oldRaw){
+      try{
+        var old=JSON.parse(oldRaw);
+        if(old&&typeof old.count==='number'){
+          var d={date:old.date||today,count:old.count};
+          localStorage.setItem('quiz_my_today_count',JSON.stringify(d));
+          return d;
+        }
+      }catch(e){}
+    }
+    return {date:today,count:0};
+  }
   var data=JSON.parse(raw);
   if(data.date!==today)return {date:today,count:0};
   return data;
@@ -672,9 +686,8 @@ function recordTodayPractice(){
   if(data.date!==today){data={date:today,count:0}}
   data.count++;
   localStorage.setItem('quiz_today_practice',JSON.stringify(data));
-  var myRaw=localStorage.getItem('quiz_my_today_count');
-  var myData=myRaw?JSON.parse(myRaw):{};
-  if(myData.date!==today){myData={date:today,count:0}}
+  // Use getMyTodayCount() so it picks up existing count from pre-sync data
+  var myData=getMyTodayCount();
   myData.count++;
   localStorage.setItem('quiz_my_today_count',JSON.stringify(myData));
 }
