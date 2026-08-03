@@ -809,7 +809,6 @@ function submit(qid,qtype){
   document.getElementById('res').innerHTML='<div class="result-box '+(is?'good':'bad')+'"><div class="ans">'+(is?'✅ 正确':'❌ 错误')+'</div><div>正确答案：<b>'+ca+'</b></div>'+(q.analysis?'<div class="analysis">📖 '+q.analysis+'</div>':'')+'</div>';
   renderToolbar();renderQ();
   saveProgress();
-  setTimeout(function(){nextQ()},1000);
 }
 
 function prevQ(){if(currentIndex>0){currentIndex--;renderToolbar();renderQ();saveProgress()}}
