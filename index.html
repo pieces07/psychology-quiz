@@ -58,7 +58,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 .stats-panel{background:var(--accent-gradient);border-radius:var(--radius);padding:20px;margin-bottom:20px;color:#fff;position:relative;overflow:hidden}
 .stats-panel::before{content:'';position:absolute;top:-50%;right:-30%;width:200px;height:200px;background:rgba(255,255,255,.1);border-radius:50%}
 .stats-panel h3{font-size:14px;opacity:.9;margin-bottom:12px;font-weight:600}
-.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;position:relative;z-index:1}
+.stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;position:relative;z-index:1}
 .stat-item{text-align:center}
 .stat-item .val{font-size:24px;font-weight:800}
 .stat-item .lbl{font-size:11px;opacity:.8;margin-top:2px}
@@ -321,6 +321,24 @@ function restoreProgress(){
 function clearProgress(){localStorage.removeItem('quiz_progress')}
 
 // === 统计数据 ===
+// === 今日刷题记录 ===
+function recordTodayPractice(){
+  var today=new Date().toLocaleDateString('zh-CN');
+  var raw=localStorage.getItem('quiz_today_practice');
+  var data=raw?JSON.parse(raw):{};
+  if(data.date!==today){data={date:today,count:0}}
+  data.count++;
+  localStorage.setItem('quiz_today_practice',JSON.stringify(data));
+}
+function getTodayPractice(){
+  var today=new Date().toLocaleDateString('zh-CN');
+  var raw=localStorage.getItem('quiz_today_practice');
+  if(!raw)return 0;
+  var data=JSON.parse(raw);
+  if(data.date!==today)return 0;
+  return data.count||0;
+}
+
 function getStats(){
   var stats={
     totalQuestions:0,
@@ -342,6 +360,7 @@ function getStats(){
   var marked=JSON.parse(localStorage.getItem('quiz_marked')||'[]');
   stats.wrongCount=wrong.length;
   stats.markedCount=marked.length;
+  stats.todayCount=getTodayPractice();
   return stats;
 }
 
@@ -406,6 +425,7 @@ function buildHomeHTML(){
   h+='<div class="stats-panel">';
   h+='<h3>📊 学习概况</h3>';
   h+='<div class="stats-grid">';
+  h+='<div class="stat-item"><div class="val" style="color:#f59e0b">'+stats.todayCount+'</div><div class="lbl">今日刷题</div></div>';
   h+='<div class="stat-item"><div class="val">'+stats.totalQuestions+'</div><div class="lbl">总题数</div></div>';
   h+='<div class="stat-item" style="cursor:pointer" onclick="startWrongPractice()"><div class="val">'+stats.wrongCount+'</div><div class="lbl">错题 ▶</div></div>';
   h+='<div class="stat-item" style="cursor:pointer" onclick="startMarkedPractice()"><div class="val">'+stats.markedCount+'</div><div class="lbl">收藏 ▶</div></div>';
@@ -773,7 +793,7 @@ function submit(qid,qtype){
   if(!ua||(Array.isArray(ua)&&ua.length===0)){alert('请先选择答案');return}
   var alreadySubmittedBefore=!!submittedQuestions[qid];
   submitted=true;
-  if(!alreadySubmittedBefore)totalAnswered++;
+  if(!alreadySubmittedBefore){totalAnswered++;recordTodayPractice()}
   var q=questionList[currentIndex],ca=q.answer||'',is=false;
   if(qtype===2){is=[].concat(ua).sort().join(',')===ca.split(',').map(function(s){return s.trim()}).sort().join(',')}
   else if(qtype===3){var uis=ua==='对'||ua==='正确',cis=ca==='对'||ca==='正确';is=uis===cis}
@@ -885,7 +905,7 @@ function submitOne(qid,qtype){
   var ua=answers[qid];
   if(!ua||(Array.isArray(ua)&&ua.length===0))return;
   var alreadySubmittedBefore=!!submittedQuestions[qid];
-  if(!alreadySubmittedBefore)totalAnswered++;
+  if(!alreadySubmittedBefore){totalAnswered++;recordTodayPractice()}
   var q=questionList[currentIndex],ca=q.answer||'',is=false;
   if(qtype===2){is=[].concat(ua).sort().join(',')===ca.split(',').map(function(s){return s.trim()}).sort().join(',')}
   else if(qtype===3){var uis=ua==='对'||ua==='正确',cis=ca==='对'||ca==='正确';is=uis===cis}
@@ -967,6 +987,7 @@ function showStats(){
   h+='<h3>📊 学习统计</h3>';
   h+='<div class="stats-panel" style="margin:0 0 16px 0">';
   h+='<div class="stats-grid">';
+  h+='<div class="stat-item"><div class="val" style="color:#f59e0b">'+stats.todayCount+'</div><div class="lbl">今日刷题</div></div>';
   h+='<div class="stat-item"><div class="val">'+stats.totalQuestions+'</div><div class="lbl">总题数</div></div>';
   h+='<div class="stat-item" style="cursor:pointer" onclick="startWrongPractice()"><div class="val">'+stats.wrongCount+'</div><div class="lbl">错题 ▶</div></div>';
   h+='<div class="stat-item" style="cursor:pointer" onclick="startMarkedPractice()"><div class="val">'+stats.markedCount+'</div><div class="lbl">收藏 ▶</div></div>';
