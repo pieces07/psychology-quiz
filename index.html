@@ -352,26 +352,86 @@ function getGhToken(){return localStorage.getItem('quiz_gh_token')||''}
 function getGistId(){return localStorage.getItem('quiz_gist_id')||''}
 
 function collectSyncData(){
+  var deviceId=getDeviceId();
+  var today=new Date().toLocaleDateString('zh-CN');
+  var myToday=getMyTodayCount();
+  var tpDevices={};tpDevices[deviceId]=myToday;
   return JSON.stringify({
     progress:localStorage.getItem('quiz_progress'),
-    wrong:localStorage.getItem('quiz_wrong'),
-    marked:localStorage.getItem('quiz_marked'),
-    wrong_correct:localStorage.getItem('quiz_wrong_correct'),
-    today_practice:localStorage.getItem('quiz_today_practice'),
+    wrong:localStorage.getItem('quiz_wrong')||'[]',
+    marked:localStorage.getItem('quiz_marked')||'[]',
+    wrong_correct:localStorage.getItem('quiz_wrong_correct')||'{}',
+    today_practice_devices:tpDevices,
     syncTime:Date.now()
   });
+}
+
+function getDeviceId(){
+  var id=localStorage.getItem('quiz_device_id');
+  if(!id){id='dev-'+Date.now().toString(36)+Math.random().toString(36).substr(2,6);localStorage.setItem('quiz_device_id',id)}
+  return id;
+}
+
+function getMyTodayCount(){
+  var today=new Date().toLocaleDateString('zh-CN');
+  var raw=localStorage.getItem('quiz_my_today_count');
+  if(!raw)return {date:today,count:0};
+  var data=JSON.parse(raw);
+  if(data.date!==today)return {date:today,count:0};
+  return data;
+}
+
+function mergeArrays(a,b){
+  var result=a.slice();
+  b.forEach(function(id){if(result.indexOf(id)===-1)result.push(id)});
+  return result;
 }
 
 function applySyncData(data){
   if(!data)return false;
   try{
-    if(data.progress)localStorage.setItem('quiz_progress',data.progress);
-    if(data.wrong)localStorage.setItem('quiz_wrong',data.wrong);
-    if(data.marked)localStorage.setItem('quiz_marked',data.marked);
-    if(data.wrong_correct)localStorage.setItem('quiz_wrong_correct',data.wrong_correct);
-    if(data.today_practice)localStorage.setItem('quiz_today_practice',data.today_practice);
-    markedQuestions=JSON.parse(localStorage.getItem('quiz_marked')||'[]');
-    wrongCorrectCount=JSON.parse(localStorage.getItem('quiz_wrong_correct')||'{}');
+    var deviceId=getDeviceId();
+    var today=new Date().toLocaleDateString('zh-CN');
+    
+    // Merge wrong questions (union)
+    var localWrong=JSON.parse(localStorage.getItem('quiz_wrong')||'[]');
+    var cloudWrong=data.wrong?JSON.parse(data.wrong):[];
+    localStorage.setItem('quiz_wrong',JSON.stringify(mergeArrays(localWrong,cloudWrong)));
+    
+    // Merge marked questions (union)
+    var localMarked=JSON.parse(localStorage.getItem('quiz_marked')||'[]');
+    var cloudMarked=data.marked?JSON.parse(data.marked):[];
+    var mergedMarked=mergeArrays(localMarked,cloudMarked);
+    localStorage.setItem('quiz_marked',JSON.stringify(mergedMarked));
+    markedQuestions=mergedMarked;
+    
+    // Merge wrong_correct (max per question)
+    var localWC=JSON.parse(localStorage.getItem('quiz_wrong_correct')||'{}');
+    var cloudWC=data.wrong_correct?JSON.parse(data.wrong_correct):{};
+    var mergedWC={};
+    Object.keys(localWC).forEach(function(k){mergedWC[k]=localWC[k]});
+    Object.keys(cloudWC).forEach(function(k){mergedWC[k]=Math.max(mergedWC[k]||0,cloudWC[k])});
+    localStorage.setItem('quiz_wrong_correct',JSON.stringify(mergedWC));
+    wrongCorrectCount=mergedWC;
+    
+    // Merge today_practice (sum of all devices for today)
+    var tpDevices=data.today_practice_devices||{};
+    tpDevices[deviceId]=getMyTodayCount();
+    var totalCount=0;
+    Object.keys(tpDevices).forEach(function(did){
+      var tp=tpDevices[did];
+      if(tp&&tp.date===today)totalCount+=(tp.count||0);
+    });
+    localStorage.setItem('quiz_today_practice',JSON.stringify({date:today,count:totalCount}));
+    
+    // Progress: use cloud if newer
+    if(data.progress&&data.syncTime){
+      var localLastSync=parseInt(localStorage.getItem('quiz_last_sync')||'0');
+      if(data.syncTime>localLastSync){
+        localStorage.setItem('quiz_progress',data.progress);
+      }
+    }
+    
     return true;
   }catch(e){return false}
 }
@@ -416,10 +476,66 @@ async function pushToCloud(){
   try{
     var gistId=await findOrCreateGist();
     if(!gistId){isSyncing=false;updateSyncStatus('error');return}
+    
+    // Pull current cloud data first
+    var cloudData=null;
+    try{
+      var resG=await fetch('https://api.github.com/gists/'+gistId,{headers:{'Authorization':'token '+token}});
+      if(resG.ok){var g=await resG.json();if(g.files&&g.files['sync-data.json']){cloudData=JSON.parse(g.files['sync-data.json'].content)}}
+    }catch(e){}
+    
+    var deviceId=getDeviceId();
+    var today=new Date().toLocaleDateString('zh-CN');
+    var merged=cloudData||{};
+    
+    // Merge wrong (union)
+    var localWrong=JSON.parse(localStorage.getItem('quiz_wrong')||'[]');
+    var cloudWrong=merged.wrong?JSON.parse(merged.wrong):[];
+    merged.wrong=JSON.stringify(mergeArrays(cloudWrong,localWrong));
+    
+    // Merge marked (union)
+    var localMarked=JSON.parse(localStorage.getItem('quiz_marked')||'[]');
+    var cloudMarked=merged.marked?JSON.parse(merged.marked):[];
+    var mergedMarked=mergeArrays(cloudMarked,localMarked);
+    merged.marked=JSON.stringify(mergedMarked);
+    markedQuestions=mergedMarked;
+    
+    // Merge wrong_correct (max)
+    var localWC=JSON.parse(localStorage.getItem('quiz_wrong_correct')||'{}');
+    var cloudWC=merged.wrong_correct?JSON.parse(merged.wrong_correct):{};
+    var mergedWC={};
+    Object.keys(cloudWC).forEach(function(k){mergedWC[k]=cloudWC[k]});
+    Object.keys(localWC).forEach(function(k){mergedWC[k]=Math.max(mergedWC[k]||0,localWC[k])});
+    merged.wrong_correct=JSON.stringify(mergedWC);
+    wrongCorrectCount=mergedWC;
+    
+    // Update this device's today count
+    var myToday=getMyTodayCount();
+    if(!merged.today_practice_devices)merged.today_practice_devices={};
+    merged.today_practice_devices[deviceId]=myToday;
+    
+    // Compute merged today count for local display
+    var totalCount=0;
+    Object.keys(merged.today_practice_devices).forEach(function(did){
+      var tp=merged.today_practice_devices[did];
+      if(tp&&tp.date===today)totalCount+=(tp.count||0);
+    });
+    localStorage.setItem('quiz_today_practice',JSON.stringify({date:today,count:totalCount}));
+    
+    // Write merged data back to local
+    localStorage.setItem('quiz_wrong',merged.wrong);
+    localStorage.setItem('quiz_marked',merged.marked);
+    localStorage.setItem('quiz_wrong_correct',merged.wrong_correct);
+    
+    // Update progress (always use local, it's latest)
+    merged.progress=localStorage.getItem('quiz_progress');
+    merged.syncTime=Date.now();
+    
+    // Push merged to cloud
     var res=await fetch('https://api.github.com/gists/'+gistId,{
       method:'PATCH',
       headers:{'Authorization':'token '+token,'Content-Type':'application/json'},
-      body:JSON.stringify({files:{'sync-data.json':{content:collectSyncData()}}})
+      body:JSON.stringify({files:{'sync-data.json':{content:JSON.stringify(merged)}}})
     });
     if(res.ok){localStorage.setItem('quiz_last_sync',Date.now().toString());updateSyncStatus('idle')}
     else updateSyncStatus('error');
@@ -556,6 +672,11 @@ function recordTodayPractice(){
   if(data.date!==today){data={date:today,count:0}}
   data.count++;
   localStorage.setItem('quiz_today_practice',JSON.stringify(data));
+  var myRaw=localStorage.getItem('quiz_my_today_count');
+  var myData=myRaw?JSON.parse(myRaw):{};
+  if(myData.date!==today){myData={date:today,count:0}}
+  myData.count++;
+  localStorage.setItem('quiz_my_today_count',JSON.stringify(myData));
 }
 function getTodayPractice(){
   var today=new Date().toLocaleDateString('zh-CN');
@@ -1300,9 +1421,23 @@ function jumpToFirstWrong(){
 }
 
 function resetAll(){
-  if(!confirm('确定要重置所有记录？'))return;
+  if(!confirm('确定要重置所有记录？此操作会清空所有设备的错题和收藏数据！'))return;
   localStorage.removeItem('quiz_wrong');localStorage.removeItem('quiz_marked');localStorage.removeItem('quiz_wrong_correct');
-  markedQuestions=[];wrongCorrectCount={};showHome();
+  localStorage.removeItem('quiz_my_today_count');localStorage.removeItem('quiz_today_practice');
+  markedQuestions=[];wrongCorrectCount={};
+  // Also clear cloud data
+  if(getGhToken()){
+    localStorage.setItem('quiz_wrong','[]');localStorage.setItem('quiz_marked','[]');localStorage.setItem('quiz_wrong_correct','{}');
+    var today=new Date().toLocaleDateString('zh-CN');
+    var deviceId=getDeviceId();
+    var emptyCloud={wrong:'[]',marked:'[]',wrong_correct:'{}',progress:localStorage.getItem('quiz_progress'),today_practice_devices:{},syncTime:Date.now()};
+    fetch('https://api.github.com/gists/'+getGistId(),{
+      method:'PATCH',
+      headers:{'Authorization':'token '+getGhToken(),'Content-Type':'application/json'},
+      body:JSON.stringify({files:{'sync-data.json':{content:JSON.stringify(emptyCloud)}}})
+    }).catch(function(){});
+  }
+  showHome();
   debouncedSync();
 }
 
