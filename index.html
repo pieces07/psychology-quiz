@@ -218,6 +218,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 .summary-sheet{margin-top:20px}
 .summary-sheet .sheet-grid{margin-bottom:0;max-height:40vh;overflow-y:auto}
 
+/* 云同步样式 */
+.panel-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.panel-header h3{margin:0}
+.sync-badge{font-size:12px;color:var(--accent);cursor:pointer;padding:4px 10px;border-radius:12px;background:var(--accent);color:#fff;white-space:nowrap;transition:opacity .2s}
+.sync-badge:hover{opacity:.85}
+.sync-badge.offline{background:var(--surface-2);color:var(--text-muted);border:1px dashed var(--border)}
+.sync-badge.syncing{background:#3b82f6}
+.sync-badge.error{background:#ef4444}
+.sync-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:400;display:flex;align-items:center;justify-content:center;animation:fadeIn .2s ease}
+.sync-modal{background:var(--surface);border-radius:16px;padding:28px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.sync-modal h3{margin:0 0 16px;font-size:18px}
+.sync-desc{font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:16px}
+.sync-info{margin-bottom:16px}
+.sync-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.sync-row span{color:var(--text-muted)}
+.sync-input{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;background:var(--surface-2);color:var(--text);box-sizing:border-box;margin-bottom:16px;font-family:monospace}
+.sync-input:focus{outline:none;border-color:var(--accent)}
+.sync-actions{display:flex;gap:8px;flex-wrap:wrap}
+.sync-actions .act-btn{flex:1;min-width:80px}
+
 /* Responsive */
 @media(max-width:640px){
   .main{padding:12px}
@@ -287,6 +307,7 @@ function saveProgress(){
     selectedCategories:selectedCategories
   };
   try{localStorage.setItem('quiz_progress',JSON.stringify(p))}catch(e){}
+  debouncedSync();
 }
 function restoreProgress(){
   try{
@@ -320,7 +341,211 @@ function restoreProgress(){
     return true;
   }catch(e){return false}
 }
-function clearProgress(){localStorage.removeItem('quiz_progress')}
+function clearProgress(){localStorage.removeItem('quiz_progress');debouncedSync()}
+
+// === 云同步 (GitHub Gist) ===
+var GIST_DESC='psychology-quiz-sync-data';
+var syncTimer=null;
+var isSyncing=false;
+
+function getGhToken(){return localStorage.getItem('quiz_gh_token')||''}
+function getGistId(){return localStorage.getItem('quiz_gist_id')||''}
+
+function collectSyncData(){
+  return JSON.stringify({
+    progress:localStorage.getItem('quiz_progress'),
+    wrong:localStorage.getItem('quiz_wrong'),
+    marked:localStorage.getItem('quiz_marked'),
+    wrong_correct:localStorage.getItem('quiz_wrong_correct'),
+    today_practice:localStorage.getItem('quiz_today_practice'),
+    syncTime:Date.now()
+  });
+}
+
+function applySyncData(data){
+  if(!data)return false;
+  try{
+    if(data.progress)localStorage.setItem('quiz_progress',data.progress);
+    if(data.wrong)localStorage.setItem('quiz_wrong',data.wrong);
+    if(data.marked)localStorage.setItem('quiz_marked',data.marked);
+    if(data.wrong_correct)localStorage.setItem('quiz_wrong_correct',data.wrong_correct);
+    if(data.today_practice)localStorage.setItem('quiz_today_practice',data.today_practice);
+    markedQuestions=JSON.parse(localStorage.getItem('quiz_marked')||'[]');
+    wrongCorrectCount=JSON.parse(localStorage.getItem('quiz_wrong_correct')||'{}');
+    return true;
+  }catch(e){return false}
+}
+
+async function findOrCreateGist(){
+  var token=getGhToken();
+  if(!token)return null;
+  var gistId=getGistId();
+  if(gistId){
+    try{
+      var res=await fetch('https://api.github.com/gists/'+gistId,{headers:{'Authorization':'token '+token}});
+      if(res.ok){var g=await res.json();if(g.files&&g.files['sync-data.json'])return gistId}
+    }catch(e){}
+  }
+  try{
+    var res2=await fetch('https://api.github.com/gists?per_page=100',{headers:{'Authorization':'token '+token}});
+    if(res2.ok){
+      var gists=await res2.json();
+      for(var i=0;i<gists.length;i++){
+        if(gists[i].description===GIST_DESC&&gists[i].files['sync-data.json']){
+          localStorage.setItem('quiz_gist_id',gists[i].id);
+          return gists[i].id;
+        }
+      }
+    }
+  }catch(e){}
+  try{
+    var res3=await fetch('https://api.github.com/gists',{
+      method:'POST',
+      headers:{'Authorization':'token '+token,'Content-Type':'application/json'},
+      body:JSON.stringify({description:GIST_DESC,public:false,files:{'sync-data.json':{content:collectSyncData()}}})
+    });
+    if(res3.ok){var ng=await res3.json();localStorage.setItem('quiz_gist_id',ng.id);return ng.id}
+  }catch(e){}
+  return null;
+}
+
+async function pushToCloud(){
+  var token=getGhToken();
+  if(!token||isSyncing)return;
+  isSyncing=true;updateSyncStatus('syncing');
+  try{
+    var gistId=await findOrCreateGist();
+    if(!gistId){isSyncing=false;updateSyncStatus('error');return}
+    var res=await fetch('https://api.github.com/gists/'+gistId,{
+      method:'PATCH',
+      headers:{'Authorization':'token '+token,'Content-Type':'application/json'},
+      body:JSON.stringify({files:{'sync-data.json':{content:collectSyncData()}}})
+    });
+    if(res.ok){localStorage.setItem('quiz_last_sync',Date.now().toString());updateSyncStatus('idle')}
+    else updateSyncStatus('error');
+  }catch(e){updateSyncStatus('error')}
+  isSyncing=false;
+}
+
+async function pullFromCloud(){
+  var token=getGhToken();
+  if(!token)return null;
+  try{
+    var gistId=await findOrCreateGist();
+    if(!gistId)return null;
+    var res=await fetch('https://api.github.com/gists/'+gistId,{headers:{'Authorization':'token '+token}});
+    if(!res.ok)return null;
+    var gist=await res.json();
+    if(gist.files&&gist.files['sync-data.json']){
+      return JSON.parse(gist.files['sync-data.json'].content);
+    }
+  }catch(e){}
+  return null;
+}
+
+function debouncedSync(){
+  if(!getGhToken())return;
+  if(syncTimer)clearTimeout(syncTimer);
+  syncTimer=setTimeout(function(){pushToCloud()},3000);
+}
+
+function updateSyncStatus(status){
+  var el=document.getElementById('sync-indicator');
+  if(!el)return;
+  if(status==='syncing'){el.textContent='🔄 同步中...';el.className='sync-badge syncing';return}
+  if(status==='error'){el.textContent='⚠️ 同步失败';el.className='sync-badge error';return}
+  var last=localStorage.getItem('quiz_last_sync');
+  if(last){
+    var diff=Math.floor((Date.now()-parseInt(last))/1000);
+    var str=diff<60?'刚刚':diff<3600?Math.floor(diff/60)+'分钟前':Math.floor(diff/3600)+'小时前';
+    el.textContent='☁️ 已同步 '+str;el.className='sync-badge';
+  }else{el.textContent='☁️ 已连接';el.className='sync-badge'}
+}
+
+function showSyncSettings(){
+  var token=getGhToken();
+  var last=localStorage.getItem('quiz_last_sync');
+  var lastStr=last?new Date(parseInt(last)).toLocaleString('zh-CN'):'从未';
+  var h='<div class="sync-overlay" onclick="if(event.target===this)this.remove()">';
+  h+='<div class="sync-modal">';
+  if(token){
+    h+='<h3>☁️ 云同步设置</h3>';
+    h+='<div class="sync-info"><div class="sync-row"><span>状态</span><b style="color:var(--accent)">已连接</b></div>';
+    h+='<div class="sync-row"><span>上次同步</span><b>'+lastStr+'</b></div></div>';
+    h+='<div class="sync-actions">';
+    h+='<button class="act-btn btn-pri" onclick="manualSync()">立即同步</button>';
+    h+='<button class="act-btn btn-out" onclick="disconnectSync()">断开同步</button>';
+    h+='<button class="act-btn btn-out" onclick="this.closest(\'.sync-overlay\').remove()">关闭</button>';
+    h+='</div>';
+  }else{
+    h+='<h3>☁️ 开启云同步</h3>';
+    h+='<p class="sync-desc">通过 GitHub Gist 在多设备间同步做题数据。<br>需要 GitHub Personal Access Token（仅需 gist 权限）。</p>';
+    h+='<input type="text" id="sync-token-input" class="sync-input" placeholder="粘贴你的 GitHub Token..." />';
+    h+='<div class="sync-actions">';
+    h+='<button class="act-btn btn-pri" onclick="connectSync()">连接</button>';
+    h+='<button class="act-btn btn-out" onclick="this.closest(\'.sync-overlay\').remove()">取消</button>';
+    h+='</div>';
+  }
+  h+='</div></div>';
+  var div=document.createElement('div');
+  div.innerHTML=h;
+  document.body.appendChild(div.firstChild);
+}
+
+async function connectSync(){
+  var input=document.getElementById('sync-token-input');
+  if(!input||!input.value.trim()){alert('请输入Token');return}
+  var token=input.value.trim();
+  localStorage.setItem('quiz_gh_token',token);
+  var overlay=document.querySelector('.sync-overlay');
+  if(overlay)overlay.remove();
+  var note=document.createElement('div');
+  note.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;z-index:400;box-shadow:0 4px 16px rgba(0,0,0,.2)';
+  note.textContent='正在连接云同步...';
+  document.body.appendChild(note);
+  try{
+    var cloudData=await pullFromCloud();
+    if(cloudData&&cloudData.syncTime){
+      applySyncData(cloudData);
+      localStorage.setItem('quiz_last_sync',cloudData.syncTime.toString());
+      note.textContent='已从云端同步数据 ✓';
+      note.style.background='#22c55e';
+    }else{
+      await pushToCloud();
+      note.textContent='云同步已开启 ✓';
+      note.style.background='#22c55e';
+    }
+  }catch(e){
+    note.textContent='连接失败，请检查Token';
+    note.style.background='#ef4444';
+  }
+  setTimeout(function(){note.remove()},2500);
+  setTimeout(function(){location.reload()},1000);
+}
+
+function manualSync(){
+  pushToCloud();
+  var note=document.createElement('div');
+  note.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;z-index:400;box-shadow:0 4px 16px rgba(0,0,0,.2)';
+  note.textContent='正在同步...';
+  document.body.appendChild(note);
+  setTimeout(function(){
+    note.textContent='同步完成 ✓';note.style.background='#22c55e';
+    setTimeout(function(){note.remove()},1500);
+  },2000);
+  var overlay=document.querySelector('.sync-overlay');
+  if(overlay)overlay.remove();
+}
+
+function disconnectSync(){
+  if(!confirm('确定断开云同步？本地数据不会被删除。'))return;
+  localStorage.removeItem('quiz_gh_token');
+  localStorage.removeItem('quiz_gist_id');
+  localStorage.removeItem('quiz_last_sync');
+  var overlay=document.querySelector('.sync-overlay');
+  if(overlay)overlay.remove();
+  location.reload();
+}
 
 // === 统计数据 ===
 // === 今日刷题记录 ===
@@ -367,11 +592,29 @@ function getStats(){
 }
 
 // === 初始化 ===
-(function init(){
+(async function init(){
   try{
+    if(location.hash.indexOf('token=')>-1){
+      var m=location.hash.match(/token=([^&]+)/);
+      if(m&&m[1]){localStorage.setItem('quiz_gh_token',m[1]);history.replaceState(null,'',location.pathname+location.search)}
+    }
     var raw=document.getElementById('quiz-data').textContent;
     var data=JSON.parse(raw);
     Object.assign(BANK_DATA,data);
+    var cloudSynced=false;
+    if(getGhToken()){
+      try{
+        var cloudData=await pullFromCloud();
+        if(cloudData&&cloudData.syncTime){
+          var localSyncTime=parseInt(localStorage.getItem('quiz_last_sync')||'0');
+          if(cloudData.syncTime>localSyncTime){
+            applySyncData(cloudData);
+            localStorage.setItem('quiz_last_sync',cloudData.syncTime.toString());
+            cloudSynced=true;
+          }
+        }
+      }catch(e){}
+    }
     var saved=localStorage.getItem('quiz_progress');
     if(saved){
       try{
@@ -385,16 +628,25 @@ function getStats(){
           submitted=false;
           renderToolbar();renderQ();
           var note=document.createElement('div');
-          note.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;z-index:300;box-shadow:0 4px 16px rgba(0,0,0,.2);animation:fadeIn .3s ease';
-          note.textContent='已恢复上次做题进度';
+          note.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);background:'+(cloudSynced?'#22c55e':'var(--accent)')+';color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;z-index:300;box-shadow:0 4px 16px rgba(0,0,0,.2);animation:fadeIn .3s ease';
+          note.textContent=cloudSynced?'已从云端同步进度 ✓':'已恢复上次做题进度';
           document.body.appendChild(note);
           setTimeout(function(){note.remove()},2500);
+          debouncedSync();
           return;
         }
       }catch(e){}
       clearProgress();
     }
     showHome();
+    if(cloudSynced){
+      var note2=document.createElement('div');
+      note2.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#22c55e;color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;z-index:300;box-shadow:0 4px 16px rgba(0,0,0,.2);animation:fadeIn .3s ease';
+      note2.textContent='已从云端同步数据 ✓';
+      document.body.appendChild(note2);
+      setTimeout(function(){note2.remove()},2500);
+    }
+    debouncedSync();
   }catch(e){
     document.getElementById('main').innerHTML='<div class="empty"><div class="icon">⚠️</div><p>加载失败: '+e.message+'</p></div>';
   }
@@ -406,6 +658,7 @@ function showHome(){
   resetTimer();
   currentCategory='all';currentMode='all';
   document.getElementById('main').innerHTML=buildHomeHTML();
+  updateSyncStatus();
 }
 function buildHomeHTML(){
   var stats=getStats();
@@ -423,7 +676,13 @@ function buildHomeHTML(){
   
   // 统计面板
   h+='<div class="stats-panel">';
-  h+='<h3>📊 学习概况</h3>';
+  h+='<div class="panel-header"><h3>📊 学习概况</h3>';
+  if(getGhToken()){
+    h+='<span id="sync-indicator" class="sync-badge" onclick="showSyncSettings()">☁️ 已连接</span>';
+  }else{
+    h+='<span class="sync-badge offline" onclick="showSyncSettings()">☁️ 开启同步</span>';
+  }
+  h+='</div>';
   h+='<div class="stats-grid">';
   h+='<div class="stat-item"><div class="val" style="color:#f59e0b">'+stats.todayCount+'</div><div class="lbl">今日刷题</div></div>';
   h+='<div class="stat-item"><div class="val">'+stats.totalQuestions+'</div><div class="lbl">总题数</div></div>';
@@ -839,6 +1098,7 @@ function toggleStar(qid){
   var i=markedQuestions.indexOf(qid);
   if(i>-1)markedQuestions.splice(i,1);else markedQuestions.push(qid);
   localStorage.setItem('quiz_marked',JSON.stringify(markedQuestions));
+  debouncedSync();
   renderToolbar();renderQ();
 }
 
@@ -1043,6 +1303,7 @@ function resetAll(){
   if(!confirm('确定要重置所有记录？'))return;
   localStorage.removeItem('quiz_wrong');localStorage.removeItem('quiz_marked');localStorage.removeItem('quiz_wrong_correct');
   markedQuestions=[];wrongCorrectCount={};showHome();
+  debouncedSync();
 }
 
 function toggleTheme(){
@@ -1061,8 +1322,8 @@ document.addEventListener('keydown',function(e){
   if(e.key==='Enter'&&!submitted){var q=questionList[currentIndex];if(q)submit(q.id,q.type)}
 });
 
-window.addEventListener('beforeunload',function(){saveProgress()});
-window.addEventListener('pagehide',function(){saveProgress()});
+window.addEventListener('beforeunload',function(){saveProgress();if(syncTimer)clearTimeout(syncTimer);pushToCloud()});
+window.addEventListener('pagehide',function(){saveProgress();if(syncTimer)clearTimeout(syncTimer);pushToCloud()});
 
 // iOS 添加到主屏幕提示
 (function(){
