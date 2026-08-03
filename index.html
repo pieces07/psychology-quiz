@@ -317,7 +317,6 @@ function restoreProgress(){
         if(el)el.textContent=formatTime(timerElapsed);
       },1000);
     }
-    localStorage.removeItem('quiz_progress');
     return true;
   }catch(e){return false}
 }
@@ -376,23 +375,21 @@ function getStats(){
     var saved=localStorage.getItem('quiz_progress');
     if(saved){
       try{
-        var pp=JSON.parse(saved);
-        if(pp&&pp.cat){
-          var short=pp.cat==='mixed'?'跨分类练习':pp.cat.replace('（基础理论）','').replace('（三级实务）','').replace('（三级综合）','').replace('（模拟卷）','');
-          var modeNames={all:'顺序练习',random:'随机20题',wrong:'错题',marked:'收藏',mixed:'混合练习'};
-          var modeName=modeNames[pp.mode]||pp.mode;
-          if(confirm('检测到上次未完成的做题进度：\n\n分类：'+short+'\n模式：'+modeName+'\n进度：第'+(pp.answered||0)+'题\n\n是否恢复到上次位置继续做题？')){
-            if(restoreProgress()){
-              buildList();
-              var rp=JSON.parse(saved);
-              currentIndex=rp.idx||0;
-              answers=rp.answers||{};results=rp.results||{};
-              submittedQuestions=rp.submitted||{};
-              totalCorrect=rp.correct||0;totalAnswered=rp.answered||0;
-              submitted=false;
-              renderToolbar();renderQ();return;
-            }
-          }
+        if(restoreProgress()){
+          buildList();
+          var rp=JSON.parse(saved);
+          currentIndex=rp.idx||0;
+          answers=rp.answers||{};results=rp.results||{};
+          submittedQuestions=rp.submitted||{};
+          totalCorrect=rp.correct||0;totalAnswered=rp.answered||0;
+          submitted=false;
+          renderToolbar();renderQ();
+          var note=document.createElement('div');
+          note.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;z-index:300;box-shadow:0 4px 16px rgba(0,0,0,.2);animation:fadeIn .3s ease';
+          note.textContent='已恢复上次做题进度';
+          document.body.appendChild(note);
+          setTimeout(function(){note.remove()},2500);
+          return;
         }
       }catch(e){}
       clearProgress();
