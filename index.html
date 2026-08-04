@@ -344,10 +344,13 @@ function restoreProgress(){
 }
 function clearProgress(){localStorage.removeItem('quiz_progress');debouncedSync()}
 
-// === 云同步 (GitHub Gist) ===
-var GIST_DESC='psychology-quiz-sync-data';
+// === 云同步 (GitHub Gist - 公开, 读取无需Token) ===
+var GIST_ID='b30f7c086e42bc8133f51f80eb9467d8';
+var GIST_RAW='https://gist.githubusercontent.com/pieces07/'+GIST_ID+'/raw/sync-data.json';
+var GIST_API='https://api.github.com/gists/'+GIST_ID;
 var syncTimer=null;
 var isSyncing=false;
+var syncRetries=0;
 
 function getGhToken(){return localStorage.getItem('quiz_gh_token')||''}
 function getGistId(){return localStorage.getItem('quiz_gist_id')||''}
@@ -451,37 +454,9 @@ function applySyncData(data){
   }catch(e){return false}
 }
 
-async function findOrCreateGist(){
-  var token=getGhToken();
-  if(!token)return null;
-  var gistId=getGistId();
-  if(gistId){
-    try{
-      var res=await fetch('https://api.github.com/gists/'+gistId,{headers:{'Authorization':'token '+token}});
-      if(res.ok){var g=await res.json();if(g.files&&g.files['sync-data.json'])return gistId}
-    }catch(e){}
-  }
-  try{
-    var res2=await fetch('https://api.github.com/gists?per_page=100',{headers:{'Authorization':'token '+token}});
-    if(res2.ok){
-      var gists=await res2.json();
-      for(var i=0;i<gists.length;i++){
-        if(gists[i].description===GIST_DESC&&gists[i].files['sync-data.json']){
-          localStorage.setItem('quiz_gist_id',gists[i].id);
-          return gists[i].id;
-        }
-      }
-    }
-  }catch(e){}
-  try{
-    var res3=await fetch('https://api.github.com/gists',{
-      method:'POST',
-      headers:{'Authorization':'token '+token,'Content-Type':'application/json'},
-      body:JSON.stringify({description:GIST_DESC,public:false,files:{'sync-data.json':{content:collectSyncData()}}})
-    });
-    if(res3.ok){var ng=await res3.json();localStorage.setItem('quiz_gist_id',ng.id);return ng.id}
-  }catch(e){}
-  return null;
+function findOrCreateGist(){
+  // 公开 Gist 的 ID 直接硬编码，无需 API 调用查找
+  return GIST_ID;
 }
 
 var syncLastError='';
@@ -492,14 +467,11 @@ async function pushToCloud(){
   isSyncing=true;updateSyncStatus('syncing');
   syncLastError='';
   try{
-    var gistId=await findOrCreateGist();
-    if(!gistId){syncLastError='无法找到或创建 Gist，请检查 Token 权限';isSyncing=false;updateSyncStatus('error');return}
-    
-    // Pull current cloud data first
+    // Pull current cloud data first (no auth, no rate limit)
     var cloudData=null;
     try{
-      var resG=await fetch('https://api.github.com/gists/'+gistId,{headers:{'Authorization':'token '+token}});
-      if(resG.ok){var g=await resG.json();if(g.files&&g.files['sync-data.json']){cloudData=JSON.parse(g.files['sync-data.json'].content)}}
+      var resG=await fetch(GIST_RAW+'?t='+Date.now(),{cache:'no-store'});
+      if(resG.ok){var text=await resG.text();if(text&&text!=='placeholder'){cloudData=JSON.parse(text)}}
     }catch(e){}
     
     var deviceId=getDeviceId();
@@ -539,48 +511,60 @@ async function pushToCloud(){
       if(tp&&tp.date===today)totalCount+=(tp.count||0);
     });
     localStorage.setItem('quiz_today_practice',JSON.stringify({date:today,count:totalCount}));
-    
-    // Write merged data back to local
     localStorage.setItem('quiz_wrong',merged.wrong);
     localStorage.setItem('quiz_marked',merged.marked);
     localStorage.setItem('quiz_wrong_correct',merged.wrong_correct);
-    
-    // Update progress (always use local, it's latest)
     merged.progress=localStorage.getItem('quiz_progress');
     merged.syncTime=Date.now();
     
-    // Push merged to cloud
-    var res=await fetch('https://api.github.com/gists/'+gistId,{
+    // Push merged to cloud (only this call needs auth)
+    var res=await fetch(GIST_API,{
       method:'PATCH',
       headers:{'Authorization':'token '+token,'Content-Type':'application/json'},
       body:JSON.stringify({files:{'sync-data.json':{content:JSON.stringify(merged)}}})
     });
-    if(res.ok){localStorage.setItem('quiz_last_sync',Date.now().toString());updateSyncStatus('idle')}
-    else{syncLastError='Gist API 返回 '+res.status;updateSyncStatus('error')}
+    if(res.ok){
+      localStorage.setItem('quiz_last_sync',Date.now().toString());
+      updateSyncStatus('idle');
+      syncRetries=0;
+    }else if(res.status===403){
+      // Rate limited: retry with backoff
+      syncRetries++;
+      var msg='API限流(403)';
+      if(syncRetries<=3){
+        var delay=syncRetries*10000;
+        syncLastError=msg+'，'+Math.round(delay/1000)+'秒后重试('+syncRetries+'/3)';
+        updateSyncStatus('error');
+        isSyncing=false;
+        setTimeout(function(){pushToCloud()},delay);
+        return;
+      }
+      syncLastError=msg+'，已重试3次仍失败，请稍后再试';
+      updateSyncStatus('error');
+    }else{
+      syncLastError='Gist API 返回 '+res.status;
+      updateSyncStatus('error');
+    }
   }catch(e){syncLastError=e.message||'网络错误';updateSyncStatus('error')}
   isSyncing=false;
 }
 
 async function pullFromCloud(){
-  var token=getGhToken();
-  if(!token)return null;
+  // 公开 Gist 读取无需 Token, 不走速率限制
   try{
-    var gistId=await findOrCreateGist();
-    if(!gistId){syncLastError='pullFromCloud: 无法找到 Gist';return null}
-    var res=await fetch('https://api.github.com/gists/'+gistId,{headers:{'Authorization':'token '+token}});
-    if(!res.ok){syncLastError='pullFromCloud: API 返回 '+res.status;return null}
-    var gist=await res.json();
-    if(gist.files&&gist.files['sync-data.json']){
-      return JSON.parse(gist.files['sync-data.json'].content);
-    }
-  }catch(e){syncLastError='pullFromCloud: '+(e.message||'网络错误')}
+    var res=await fetch(GIST_RAW+'?t='+Date.now(),{cache:'no-store'});
+    if(!res.ok){syncLastError='读取云端失败 HTTP '+res.status;return null}
+    var text=await res.text();
+    if(!text||text==='placeholder'){return null}
+    return JSON.parse(text);
+  }catch(e){syncLastError='读取云端失败: '+(e.message||'网络错误')}
   return null;
 }
 
 function debouncedSync(){
   if(!getGhToken())return;
   if(syncTimer)clearTimeout(syncTimer);
-  syncTimer=setTimeout(function(){pushToCloud()},3000);
+  syncTimer=setTimeout(function(){pushToCloud()},15000);
 }
 
 function updateSyncStatus(status){
@@ -735,12 +719,11 @@ function getStats(){
 // === 初始化 ===
 (async function init(){
   try{
-    if(location.hash.indexOf('token=')>-1||location.hash.indexOf('gist=')>-1){
+    if(location.hash.indexOf('token=')>-1){
       var m=location.hash.match(/token=([^&]+)/);
       if(m&&m[1])localStorage.setItem('quiz_gh_token',m[1]);
-      var g=location.hash.match(/gist=([^&]+)/);
-      if(g&&g[1])localStorage.setItem('quiz_gist_id',g[1]);
       history.replaceState(null,'',location.pathname+location.search);
+      // Token set from URL, will auto-sync in init flow below
     }
     var raw=document.getElementById('quiz-data').textContent;
     var data=JSON.parse(raw);
