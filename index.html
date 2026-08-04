@@ -237,6 +237,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 .sync-input:focus{outline:none;border-color:var(--accent)}
 .sync-actions{display:flex;gap:8px;flex-wrap:wrap}
 .sync-actions .act-btn{flex:1;min-width:80px}
+.sync-error-msg{margin:8px 0 16px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#dc2626;line-height:1.5;word-break:break-all}
 
 /* Responsive */
 @media(max-width:640px){
@@ -483,13 +484,16 @@ async function findOrCreateGist(){
   return null;
 }
 
+var syncLastError='';
+
 async function pushToCloud(){
   var token=getGhToken();
   if(!token||isSyncing)return;
   isSyncing=true;updateSyncStatus('syncing');
+  syncLastError='';
   try{
     var gistId=await findOrCreateGist();
-    if(!gistId){isSyncing=false;updateSyncStatus('error');return}
+    if(!gistId){syncLastError='无法找到或创建 Gist，请检查 Token 权限';isSyncing=false;updateSyncStatus('error');return}
     
     // Pull current cloud data first
     var cloudData=null;
@@ -552,8 +556,8 @@ async function pushToCloud(){
       body:JSON.stringify({files:{'sync-data.json':{content:JSON.stringify(merged)}}})
     });
     if(res.ok){localStorage.setItem('quiz_last_sync',Date.now().toString());updateSyncStatus('idle')}
-    else updateSyncStatus('error');
-  }catch(e){updateSyncStatus('error')}
+    else{syncLastError='Gist API 返回 '+res.status;updateSyncStatus('error')}
+  }catch(e){syncLastError=e.message||'网络错误';updateSyncStatus('error')}
   isSyncing=false;
 }
 
@@ -562,14 +566,14 @@ async function pullFromCloud(){
   if(!token)return null;
   try{
     var gistId=await findOrCreateGist();
-    if(!gistId)return null;
+    if(!gistId){syncLastError='pullFromCloud: 无法找到 Gist';return null}
     var res=await fetch('https://api.github.com/gists/'+gistId,{headers:{'Authorization':'token '+token}});
-    if(!res.ok)return null;
+    if(!res.ok){syncLastError='pullFromCloud: API 返回 '+res.status;return null}
     var gist=await res.json();
     if(gist.files&&gist.files['sync-data.json']){
       return JSON.parse(gist.files['sync-data.json'].content);
     }
-  }catch(e){}
+  }catch(e){syncLastError='pullFromCloud: '+(e.message||'网络错误')}
   return null;
 }
 
@@ -583,7 +587,7 @@ function updateSyncStatus(status){
   var el=document.getElementById('sync-indicator');
   if(!el)return;
   if(status==='syncing'){el.textContent='🔄 同步中...';el.className='sync-badge syncing';return}
-  if(status==='error'){el.textContent='⚠️ 同步失败';el.className='sync-badge error';return}
+  if(status==='error'){el.textContent='⚠️ 同步失败';el.className='sync-badge error';el.title=syncLastError||'未知错误';return}
   var last=localStorage.getItem('quiz_last_sync');
   if(last){
     var diff=Math.floor((Date.now()-parseInt(last))/1000);
@@ -602,6 +606,9 @@ function showSyncSettings(){
     h+='<h3>☁️ 云同步设置</h3>';
     h+='<div class="sync-info"><div class="sync-row"><span>状态</span><b style="color:var(--accent)">已连接</b></div>';
     h+='<div class="sync-row"><span>上次同步</span><b>'+lastStr+'</b></div></div>';
+    if(syncLastError){
+      h+='<div class="sync-error-msg">'+syncLastError+'</div>';
+    }
     h+='<div class="sync-actions">';
     h+='<button class="act-btn btn-pri" onclick="manualSync()">立即同步</button>';
     h+='<button class="act-btn btn-out" onclick="disconnectSync()">断开同步</button>';
@@ -728,9 +735,12 @@ function getStats(){
 // === 初始化 ===
 (async function init(){
   try{
-    if(location.hash.indexOf('token=')>-1){
+    if(location.hash.indexOf('token=')>-1||location.hash.indexOf('gist=')>-1){
       var m=location.hash.match(/token=([^&]+)/);
-      if(m&&m[1]){localStorage.setItem('quiz_gh_token',m[1]);history.replaceState(null,'',location.pathname+location.search)}
+      if(m&&m[1])localStorage.setItem('quiz_gh_token',m[1]);
+      var g=location.hash.match(/gist=([^&]+)/);
+      if(g&&g[1])localStorage.setItem('quiz_gist_id',g[1]);
+      history.replaceState(null,'',location.pathname+location.search);
     }
     var raw=document.getElementById('quiz-data').textContent;
     var data=JSON.parse(raw);
